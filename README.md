@@ -2,10 +2,32 @@ a simple maubot module that responds with financial data about stock price or cr
 
 To install, please see the [standard maubot plugin installation instructions](https://github.com/maubot/maubot/wiki/Usage#adding-a-plugin)
 
-note: this module depends on having an api key for [Alpha Vantage](https://www.alphavantage.co/support/#api-key)
+## Supported Backends
+
+This bot supports multiple financial data backends with automatic fallback:
+
+- **[Alpha Vantage](https://www.alphavantage.co/support/#api-key)** - Free tier available, supports stocks and cryptocurrency
+- **[Financial Modeling Prep (FMP)](https://site.financialmodelingprep.com/developer/docs)** - Free tier available, supports stocks
+
+### Backend Fallback Logic
+
+The bot will automatically:
+- Skip any backends with empty or missing API keys
+- Try backends sequentially until one returns valid data
+- Use the first successful response
+- If no backends are configured, inform the user to set up at least one API key
+- If all configured backends fail, return an error message
+
+This allows you to use multiple backends as fallback options, which is especially useful if one backend has rate limits or temporary issues.
 
 ## Setup
-plug in your Alpha Vantage API key in the config file (either before packaging in the base-config, or directly in the maubot interface after loading).
+
+Configure at least one API backend in the config file (either before packaging in the base-config, or directly in the maubot interface after loading):
+
+- **Alpha Vantage**: Set `alphavantageKey` to your API key from [Alpha Vantage](https://www.alphavantage.co/support/#api-key)
+- **Financial Modeling Prep**: Set `fmpKey` to your API key from [Financial Modeling Prep](https://site.financialmodelingprep.com/developer/docs)
+
+You can configure both backends for redundancy, or just one if you prefer. The bot will automatically use whichever backend(s) you have configured.
 
 update the commands you want to use, by default stock data is returned with the `!stonks` command, and crypto data is returned with `!hodl` command. for example:
 
