@@ -39,14 +39,9 @@ would return something like this:
 
 ```markdown
 **Current data for International Business Machines (https://finance.yahoo.com/quote/IBM) (IBM):**
-
-**Price:** $277.22, ▼-1.3557% from previous close @ $281.03
-**Open:** $278.20
-**52 Week High:** $283.06
-**52 Week Low:** $162.58
-**Sector:** TECHNOLOGY
-**Market Cap:** $261.19B
-**P/E Ratio:** 47.39
+**Price:** $277.22, ▼-1.36% from previous close @ $281.03
+**Open:** $278.20 | **Day:** $278.00-$279.00
+**52W:** $162.58-$283.06
 ```
 
 and

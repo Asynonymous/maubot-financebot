@@ -13,6 +13,7 @@ class Config(BaseProxyConfig):
     def do_update(self, helper: ConfigUpdateHelper) -> None:
         helper.copy("alphavantageKey")
         helper.copy("fmpKey")
+        helper.copy("fmpFreeTier")
         helper.copy("rapidapiKey")
         helper.copy("rapidapiHost")
         helper.copy("stocktrigger")
@@ -104,9 +105,8 @@ class FinanceBot(Plugin):
                 "change": change,
                 "change_percent": change_percent,
                 "company_name": quote_data.get("longName") or quote_data.get("shortName") or ticker,
-                "sector": quote_data.get("sector", "N/A"),
-                "market_cap": float(quote_data.get("marketCap") or 0),
-                "pe_ratio": quote_data.get("trailingPE") or quote_data.get("forwardPE") or "N/A",
+                "day_high": float(quote_data.get("regularMarketDayHigh") or 0),
+                "day_low": float(quote_data.get("regularMarketDayLow") or 0),
                 "high_52w": float(quote_data.get("fiftyTwoWeekHigh") or 0),
                 "low_52w": float(quote_data.get("fiftyTwoWeekLow") or 0),
             }
@@ -118,12 +118,10 @@ class FinanceBot(Plugin):
         """Fetch stock data from Alpha Vantage API."""
         try:
             api_key = self.config["alphavantageKey"]
-            overview_url = f'https://www.alphavantage.co/query?function=OVERVIEW&symbol={ticker}&apikey={api_key}'
             quote_url = f'https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={ticker}&apikey={api_key}'
 
-            overview_json = await self._get_json("Alpha Vantage", "overview", overview_url)
             quote_json = await self._get_json("Alpha Vantage", "quote", quote_url)
-            if not isinstance(overview_json, dict) or not isinstance(quote_json, dict):
+            if not isinstance(quote_json, dict):
                 return None
 
             if "Error Message" in quote_json:
@@ -139,10 +137,6 @@ class FinanceBot(Plugin):
                 self.log.warning(f"Alpha Vantage info: {info}")
                 return None
 
-            if "Error Message" in overview_json:
-                self.log.warning(f"Alpha Vantage overview error: {overview_json['Error Message']}")
-                return None
-
             if 'Global Quote' not in quote_json:
                 return None
 
@@ -152,13 +146,12 @@ class FinanceBot(Plugin):
                 'open_price': float(quote['02. open']),
                 'previous_close': float(quote['08. previous close']),
                 'change': float(quote['09. change']),
-                'change_percent': quote['10. change percent'],
-                'company_name': overview_json.get('Name', ticker),
-                'sector': overview_json.get('Sector', 'N/A'),
-                'market_cap': float(overview_json.get('MarketCapitalization', 0)),
-                'pe_ratio': overview_json.get('PERatio', 'N/A'),
-                'high_52w': float(overview_json.get('52WeekHigh', 0)),
-                'low_52w': float(overview_json.get('52WeekLow', 0))
+                'change_percent': f"{float(quote['10. change percent'].rstrip('%')):.2f}%",
+                'company_name': ticker,
+                'day_high': float(quote['03. high']),
+                'day_low': float(quote['04. low']),
+                'high_52w': 0,
+                'low_52w': 0
             }
         except Exception as e:
             self.log.exception(f"Alpha Vantage exception: {e}")
@@ -168,28 +161,18 @@ class FinanceBot(Plugin):
         """Fetch stock data from Financial Modeling Prep API."""
         try:
             api_key = self.config["fmpKey"]
-            profile_url = f'https://financialmodelingprep.com/stable/profile?symbol={ticker}&apikey={api_key}'
-            quote_url = f'https://financialmodelingprep.com/stable/quote?symbol={ticker}&apikey={api_key}'
+            fmp_endpoint = "profile" if self.config.get("fmpFreeTier", True) else "quote"
+            quote_url = f'https://financialmodelingprep.com/stable/{fmp_endpoint}?symbol={ticker}&apikey={api_key}'
 
-            profile_data = await self._get_json("FMP", "profile", profile_url)
-            quote_data = await self._get_json("FMP", "quote", quote_url)
-
-            # FMP returns arrays, check if we got valid data
-            if not profile_data or not isinstance(profile_data, list) or len(profile_data) == 0:
-                self.log.warning("FMP profile data empty or invalid")
-                return None
-
+            quote_data = await self._get_json("FMP", fmp_endpoint, quote_url)
             if not quote_data or not isinstance(quote_data, list) or len(quote_data) == 0:
                 self.log.warning("FMP quote data empty or invalid")
                 return None
+            use_profile = fmp_endpoint == "profile"
 
-            profile = profile_data[0]
             quote = quote_data[0]
 
             # Check for error messages
-            if isinstance(profile, dict) and 'Error' in profile:
-                self.log.warning(f"FMP error in profile response: {profile.get('Error')}")
-                return None
             if isinstance(quote, dict) and 'Error' in quote:
                 self.log.warning(f"FMP error in quote response: {quote.get('Error')}")
                 return None
@@ -200,46 +183,38 @@ class FinanceBot(Plugin):
                 self.log.warning("FMP returned zero price")
                 return None
 
-            previous_close = float(quote.get('previousClose', current_price))
-            open_price = float(quote.get('open', current_price))
-            change = current_price - previous_close
-            change_percent = f"{(change / previous_close * 100):.2f}%" if previous_close > 0 else "0.00%"
+            change = float(quote.get('change', 0)) if use_profile else 0
+            previous_close = current_price - change if use_profile else float(quote.get('previousClose', current_price))
+            if not use_profile:
+                change = current_price - previous_close
+            change_percent_value = quote.get('changePercentage')
+            if change_percent_value is None:
+                change_percent = f"{(change / previous_close * 100):.2f}%" if previous_close > 0 else "0.00%"
+            else:
+                change_percent = f"{float(change_percent_value):.2f}%"
 
-            # Extract profile data
-            company_name = profile.get('companyName', ticker)
-            sector = profile.get('sector', 'N/A')
-            market_cap = float(profile.get('mktCap', 0))
-            pe_ratio = profile.get('peRatio', 'N/A')
-            
-            # Handle 52-week high/low - FMP may have range string or separate fields
             high_52w = 0
             low_52w = 0
-            if 'range' in profile and profile['range']:
+            if quote.get('range'):
                 try:
-                    range_parts = str(profile['range']).split('-')
+                    range_parts = str(quote['range']).split('-')
                     if len(range_parts) == 2:
                         low_52w = float(range_parts[0])
                         high_52w = float(range_parts[1])
                 except (ValueError, IndexError):
                     pass
-            # Fallback to separate fields if range parsing failed
-            if high_52w == 0 and '52WeekHigh' in profile:
-                high_52w = float(profile.get('52WeekHigh', 0))
-            if low_52w == 0 and '52WeekLow' in profile:
-                low_52w = float(profile.get('52WeekLow', 0))
 
             return {
                 'current_price': current_price,
-                'open_price': open_price,
+                'open_price': 0 if use_profile else float(quote.get('open', current_price)),
                 'previous_close': previous_close,
                 'change': change,
                 'change_percent': change_percent,
-                'company_name': company_name,
-                'sector': sector,
-                'market_cap': market_cap,
-                'pe_ratio': pe_ratio if pe_ratio != '' else 'N/A',
-                'high_52w': high_52w,
-                'low_52w': low_52w
+                'company_name': quote.get('companyName') or quote.get('name') or ticker,
+                'day_high': 0 if use_profile else float(quote.get('dayHigh') or 0),
+                'day_low': 0 if use_profile else float(quote.get('dayLow') or 0),
+                'high_52w': high_52w if use_profile else float(quote.get('yearHigh') or 0),
+                'low_52w': low_52w if use_profile else float(quote.get('yearLow') or 0)
             }
         except Exception as e:
             self.log.exception(f"FMP exception: {e}")
@@ -255,30 +230,18 @@ class FinanceBot(Plugin):
             color = "green"
             arrow = "\U000025B2"
 
-        # Format market cap to be more readable
-        market_cap = data['market_cap']
-        if market_cap >= 1e12:
-            market_cap_str = f"${market_cap/1e12:.2f}T"
-        elif market_cap >= 1e9:
-            market_cap_str = f"${market_cap/1e9:.2f}B"
-        elif market_cap >= 1e6:
-            market_cap_str = f"${market_cap/1e6:.2f}M"
-        else:
-            market_cap_str = f"${market_cap:.2f}"
-
-        return "<br />".join([
-            f"<b>Current data for <a href=\"https://finance.yahoo.com/quote/{ticker}\">\
-                    {data['company_name']}</a> ({ticker}):</b>",
-            f"",
-            f"<b>Price:</b> <font color=\"{color}\">${data['current_price']:.2f}, \
-                    {arrow}{data['change_percent']}</font> from previous close @ ${data['previous_close']:.2f}",
-            f"<b>Open:</b> ${data['open_price']:.2f}",
-            f"<b>52 Week High:</b> ${data['high_52w']:.2f}",
-            f"<b>52 Week Low:</b> ${data['low_52w']:.2f}",
-            f"<b>Sector:</b> {data['sector']}",
-            f"<b>Market Cap:</b> {market_cap_str}",
-            f"<b>P/E Ratio:</b> {data['pe_ratio']}"
-        ])
+        lines = [
+            f"<b>Current data for <a href=\"https://finance.yahoo.com/quote/{ticker}\">{data['company_name']}</a> ({ticker}):</b>",
+            f"<b>Price:</b> <font color=\"{color}\">${data['current_price']:.2f}, {arrow}{data['change_percent']}</font> from previous close @ ${data['previous_close']:.2f}",
+        ]
+        if data['open_price'] > 0 and data['day_low'] > 0 and data['day_high'] > 0:
+            lines.append(
+                f"<b>Open:</b> ${data['open_price']:.2f} | "
+                f"<b>Day:</b> ${data['day_low']:.2f}-${data['day_high']:.2f}"
+            )
+        if data['low_52w'] > 0 and data['high_52w'] > 0:
+            lines.append(f"<b>52W:</b> ${data['low_52w']:.2f}-${data['high_52w']:.2f}")
+        return "<br />".join(lines)
 
     @command.new(name=lambda self: self.config["stocktrigger"],
             help="Look up information about a stock by its ticker symbol")

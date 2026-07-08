@@ -2,6 +2,7 @@
 # At least one backend must be configured for the bot to function
 alphavantageKey:
 fmpKey:
+fmpFreeTier: true
 rapidapiKey:
 rapidapiHost: yh-finance.p.rapidapi.com
 
