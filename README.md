@@ -6,6 +6,7 @@ To install, please see the [standard maubot plugin installation instructions](ht
 
 This bot supports multiple financial data backends with automatic fallback:
 
+- **[RapidAPI Yahoo Finance](https://rapidapi.com/apidojo/api/yh-finance/)** - Free tier available, supports stocks
 - **[Alpha Vantage](https://www.alphavantage.co/support/#api-key)** - Free tier available, supports stocks and cryptocurrency
 - **[Financial Modeling Prep (FMP)](https://site.financialmodelingprep.com/developer/docs)** - Free tier available, supports stocks
 
@@ -24,6 +25,7 @@ This allows you to use multiple backends as fallback options, which is especiall
 
 Configure at least one API backend in the config file (either before packaging in the base-config, or directly in the maubot interface after loading):
 
+- **RapidAPI Yahoo Finance**: Set `rapidapiKey` to your RapidAPI key and `rapidapiHost` to the Yahoo Finance API hostname. This is tried first for stock quotes.
 - **Alpha Vantage**: Set `alphavantageKey` to your API key from [Alpha Vantage](https://www.alphavantage.co/support/#api-key)
 - **Financial Modeling Prep**: Set `fmpKey` to your API key from [Financial Modeling Prep](https://site.financialmodelingprep.com/developer/docs)
 

@@ -1,9 +1,10 @@
 # API keys for financial data backends
 # At least one backend must be configured for the bot to function
-alphavantageKey: mYsUp3rs3CretKEY12345
-fmpKey: 
+alphavantageKey:
+fmpKey:
+rapidapiKey:
+rapidapiHost: yh-finance.p.rapidapi.com
 
 # Triggers
 stocktrigger: stonks
 cryptotrigger: hodl
-

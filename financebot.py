@@ -1,4 +1,5 @@
 from typing import Optional, Type, List
+from urllib.parse import quote
 
 from mautrix.util.config import BaseProxyConfig, ConfigUpdateHelper
 from maubot import Plugin, MessageEvent
@@ -12,6 +13,8 @@ class Config(BaseProxyConfig):
     def do_update(self, helper: ConfigUpdateHelper) -> None:
         helper.copy("alphavantageKey")
         helper.copy("fmpKey")
+        helper.copy("rapidapiKey")
+        helper.copy("rapidapiHost")
         helper.copy("stocktrigger")
         helper.copy("cryptotrigger")
 
@@ -27,6 +30,9 @@ class FinanceBot(Plugin):
     def _get_available_backends(self) -> List[str]:
         """Get list of available backends that have API keys configured."""
         backends = []
+        rapidapi_key = self.config.get("rapidapiKey", "")
+        if rapidapi_key and isinstance(rapidapi_key, str) and rapidapi_key.strip():
+            backends.append("rapidapi")
         av_key = self.config.get("alphavantageKey", "")
         if av_key and isinstance(av_key, str) and av_key.strip():
             backends.append("alphavantage")
@@ -56,6 +62,58 @@ class FinanceBot(Plugin):
             self.log.exception(f"{backend} {label} request failed: {e}")
             return None
 
+    async def _fetch_rapidapi_data(self, ticker: str) -> Optional[dict]:
+        """Fetch stock data from RapidAPI's Yahoo Finance endpoint."""
+        try:
+            api_key = self.config["rapidapiKey"]
+            api_host = self.config.get("rapidapiHost", "yh-finance.p.rapidapi.com")
+            url = f"https://{api_host}/market/v2/get-quotes?symbols={quote(ticker, safe='')}"
+            headers = {
+                "x-rapidapi-key": api_key,
+                "x-rapidapi-host": api_host,
+            }
+
+            data = await self._get_json("RapidAPI Yahoo", "quote", url, headers=headers)
+            if not isinstance(data, dict):
+                return None
+
+            results = data.get("quoteResponse", {}).get("result", [])
+            if not results:
+                self.log.warning("RapidAPI Yahoo quote data empty or invalid")
+                return None
+
+            quote_data = results[0]
+            current_price = float(quote_data.get("regularMarketPrice", 0))
+            if current_price == 0:
+                self.log.warning("RapidAPI Yahoo returned zero price")
+                return None
+
+            previous_close = float(quote_data.get("regularMarketPreviousClose", current_price))
+            open_price = float(quote_data.get("regularMarketOpen", current_price))
+            change = float(quote_data.get("regularMarketChange", current_price - previous_close))
+            change_percent_value = quote_data.get("regularMarketChangePercent")
+            if change_percent_value is None:
+                change_percent = f"{(change / previous_close * 100):.2f}%" if previous_close > 0 else "0.00%"
+            else:
+                change_percent = f"{float(change_percent_value):.2f}%"
+
+            return {
+                "current_price": current_price,
+                "open_price": open_price,
+                "previous_close": previous_close,
+                "change": change,
+                "change_percent": change_percent,
+                "company_name": quote_data.get("longName") or quote_data.get("shortName") or ticker,
+                "sector": quote_data.get("sector", "N/A"),
+                "market_cap": float(quote_data.get("marketCap") or 0),
+                "pe_ratio": quote_data.get("trailingPE") or quote_data.get("forwardPE") or "N/A",
+                "high_52w": float(quote_data.get("fiftyTwoWeekHigh") or 0),
+                "low_52w": float(quote_data.get("fiftyTwoWeekLow") or 0),
+            }
+        except Exception as e:
+            self.log.exception(f"RapidAPI Yahoo exception: {e}")
+            return None
+
     async def _fetch_alphavantage_data(self, ticker: str) -> Optional[dict]:
         """Fetch stock data from Alpha Vantage API."""
         try:
@@ -74,6 +132,10 @@ class FinanceBot(Plugin):
 
             if "Information" in quote_json:
                 info = quote_json["Information"]
+                # Strip out API key if present
+                api_key = self.config['alphavantageKey']
+                if api_key in info:
+                    info = info.replace(api_key, "[API KEY]")
                 self.log.warning(f"Alpha Vantage info: {info}")
                 return None
 
@@ -235,14 +297,16 @@ class FinanceBot(Plugin):
         # Get available backends
         backends = self._get_available_backends()
         if not backends:
-            await evt.respond("No API backends configured. Please configure at least one API key (alphavantageKey or fmpKey) in the bot configuration.")
+            await evt.respond("No API backends configured. Please configure at least one API key (rapidapiKey, alphavantageKey or fmpKey) in the bot configuration.")
             return None
 
         # Try each backend sequentially until one succeeds
         stock_data = None
         for backend in backends:
             self.log.debug(f"Trying backend: {backend}")
-            if backend == "alphavantage":
+            if backend == "rapidapi":
+                stock_data = await self._fetch_rapidapi_data(tickerUpper)
+            elif backend == "alphavantage":
                 stock_data = await self._fetch_alphavantage_data(tickerUpper)
             elif backend == "fmp":
                 stock_data = await self._fetch_fmp_data(tickerUpper)
