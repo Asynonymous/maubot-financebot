@@ -7,7 +7,6 @@ from maubot.handlers import command
 # not necessary, as it's imported by maubot already
 #import asyncio
 #import aiohttp
-import json
 
 class Config(BaseProxyConfig):
     def do_update(self, helper: ConfigUpdateHelper) -> None:
@@ -36,17 +35,38 @@ class FinanceBot(Plugin):
             backends.append("fmp")
         return backends
 
+    async def _get_json(
+            self, backend: str, label: str, url: str,
+            headers: Optional[dict] = None) -> Optional[object]:
+        """Fetch JSON from a provider and handle HTTP/non-JSON failures."""
+        try:
+            async with self.http.get(url, headers=headers) as response:
+                body = await response.text()
+                if response.status != 200:
+                    self.log.warning(
+                        f"{backend} {label} returned HTTP {response.status}: {body[:300]}"
+                    )
+                    return None
+                try:
+                    return await response.json(content_type=None)
+                except ValueError:
+                    self.log.warning(f"{backend} {label} returned non-JSON response: {body[:300]}")
+                    return None
+        except Exception as e:
+            self.log.exception(f"{backend} {label} request failed: {e}")
+            return None
+
     async def _fetch_alphavantage_data(self, ticker: str) -> Optional[dict]:
         """Fetch stock data from Alpha Vantage API."""
         try:
-            overview_url = f'https://www.alphavantage.co/query?function=OVERVIEW&symbol={ticker}&apikey={self.config["alphavantageKey"]}'
-            quote_url = f'https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={ticker}&apikey={self.config["alphavantageKey"]}'
-            
-            overview_response = await self.http.get(overview_url)
-            overview_json = await overview_response.json()
-            
-            quote_response = await self.http.get(quote_url)
-            quote_json = await quote_response.json()
+            api_key = self.config["alphavantageKey"]
+            overview_url = f'https://www.alphavantage.co/query?function=OVERVIEW&symbol={ticker}&apikey={api_key}'
+            quote_url = f'https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={ticker}&apikey={api_key}'
+
+            overview_json = await self._get_json("Alpha Vantage", "overview", overview_url)
+            quote_json = await self._get_json("Alpha Vantage", "quote", quote_url)
+            if not isinstance(overview_json, dict) or not isinstance(quote_json, dict):
+                return None
 
             if "Error Message" in quote_json:
                 self.log.warning(f"Alpha Vantage error: {quote_json['Error Message']}")
@@ -54,9 +74,6 @@ class FinanceBot(Plugin):
 
             if "Information" in quote_json:
                 info = quote_json["Information"]
-                api_key = self.config['alphavantageKey']
-                if api_key in info:
-                    info = info.replace(api_key, "[API KEY]")
                 self.log.warning(f"Alpha Vantage info: {info}")
                 return None
 
@@ -88,14 +105,12 @@ class FinanceBot(Plugin):
     async def _fetch_fmp_data(self, ticker: str) -> Optional[dict]:
         """Fetch stock data from Financial Modeling Prep API."""
         try:
-            profile_url = f'https://financialmodelingprep.com/stable/profile?symbol={ticker}&apikey={self.config["fmpKey"]}'
-            quote_url = f'https://financialmodelingprep.com/stable/quote?symbol={ticker}&apikey={self.config["fmpKey"]}'
-            
-            profile_response = await self.http.get(profile_url)
-            profile_data = await profile_response.json()
-            
-            quote_response = await self.http.get(quote_url)
-            quote_data = await quote_response.json()
+            api_key = self.config["fmpKey"]
+            profile_url = f'https://financialmodelingprep.com/stable/profile?symbol={ticker}&apikey={api_key}'
+            quote_url = f'https://financialmodelingprep.com/stable/quote?symbol={ticker}&apikey={api_key}'
+
+            profile_data = await self._get_json("FMP", "profile", profile_url)
+            quote_data = await self._get_json("FMP", "quote", quote_url)
 
             # FMP returns arrays, check if we got valid data
             if not profile_data or not isinstance(profile_data, list) or len(profile_data) == 0:
